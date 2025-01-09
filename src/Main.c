@@ -1,122 +1,167 @@
 /*
  ============================================================================
- Name        : qmpc.c
- Author      : <Your Name Here>
+ Name        : linprog.c
+ Author      : Daniel Mårtensson
  Version     : 1.0
  Copyright   : MIT
- Description : Model Predictive Control with integral action and constraints on inputs and outputs
+ Description : Solve Ax=b with constraints by using Simplex method
  ============================================================================
  */
-
+#include "CControl/Sources/Optimization/optimization.h"
 #include "CControl/ccontrol.h"
-
-#define row_a 2
-#define column_b 1
-#define row_c 1
-#define row_ai (row_a + column_b)
-#define column_bi column_b
-#define row_ci row_c
-#define N 10
-#define SAMPLE_TIME 0.5f
-#define SETPOINT 6.0f
-#define LAMBDA 0.2f
-#define MAX_U 0.4f
-#define INTEGRATION_CONSTANT 0.2f
-#define HAS_INTEGRATION_ACTION true
+#include "CControl/Headers/headers.h"
 
 int main() {
 
-    /* Create A matrix */
-    float A[row_a * row_a] = { 0, 1,
-                              -1, -1 };
+	/* Matrix A */
+	float A[6 * 4] = { 0.7179787,   0.7985186,   0.1000046,   0.2203064,
+					0.9044292,   0.5074379,   0.3539301,   0.9475452,
+					0.0029252,   0.4930148,   0.3209303,   0.5289174,
+					0.6546133,   0.7354447,   0.9989453,   0.0310190,
+					0.7434944,   0.0874402,   0.3388867,   0.8256180,
+					0.7483093,   0.3624991,   0.2039784,   0.5528368 };
 
-    /* Create B matrix */
-    float B[row_a * column_b] = { 0,
-                                  1 };
+	/* Vector b */
+	float b[6] = { 0.31028,
+				  0.69595,
+				  0.31662,
+				  0.33631,
+				  0.15131,
+				  0.83935 };
 
-    /* Create C matrix */
-    float C[row_c * row_a] = { 1, 0};
+	/* Lower and upper bounds are b_l <= Ax <= b_u, which is [A; -A]x = [b_u; -b_l] (notice the negative signs!) */
+	float bounds_A[(6 * 2) * 4] = { 0.7179787,   0.7985186,   0.1000046,   0.2203064,
+							   0.9044292,   0.5074379,   0.3539301,   0.9475452,
+							   0.0029252,   0.4930148,   0.3209303,   0.5289174,
+							   0.6546133,   0.7354447,   0.9989453,   0.0310190,
+							   0.7434944,   0.0874402,   0.3388867,   0.8256180,
+							   0.7483093,   0.3624991,   0.2039784,   0.5528368,
+							  -0.7179787,  -0.7985186,  -0.1000046,  -0.2203064,
+							  -0.9044292,  -0.5074379,  -0.3539301,  -0.9475452,
+							  -0.0029252,  -0.4930148,  -0.3209303,  -0.5289174,
+							  -0.6546133,  -0.7354447,  -0.9989453,  -0.0310190,
+							  -0.7434944,  -0.0874402,  -0.3388867,  -0.8256180,
+							  -0.7483093,  -0.3624991,  -0.2039784,  -0.5528368 };
+	float bounds_b[6 * 2] = { 0.90000, /* upper */
+						   0.60000, /* upper */
+						   0.60000, /* upper */
+						   0.90000, /* upper */
+						   0.90000, /* upper */
+						   0.90000, /* upper */
+						   0.40000, /* lower */
+						   0.10000, /* lower */
+						   0.50000, /* lower */
+						   1.00000, /* lower */
+						   0.40000, /* lower */
+						   0.20000 }; /* lower */
 
-    /* Turn the SS model into a discrete SS model */
-    c2d(A, B, row_a, column_b, SAMPLE_TIME);
+	/* Objective function is c^T = bounds_A^T*bounds_b */
+	float c[4] = { 1.64160,
+				  0.92620,
+				  0.47139,
+				  1.43351 };
 
-    /* Create Ai matrix */
-    float Ai[row_ai * row_ai];
 
-    /* Create Bi matrix */
-    float Bi[row_ai * column_bi];
+	/* Solution that need to have the same rows and columns from A */
+	float x[4];
 
-    /* Create Ci matrix */
-    float Ci[row_ci * row_ai];
 
-    /* Add integral action */
-    ssint(A, B, C, Ai, Bi, Ci, row_a, column_b, row_c);
+	/* Minimization problem: */
+	float C2[2] = { 9,
+				   4 };
+	float A2[3 * 2] = { 22, 13,
+					 1, 5,
+					 1, 20 };
+	float B2[3] = { 25,
+				   7,
+					7 };
+	float y[2]; /* Solution! */
 
-    /* Create PHI matrix */
-    float PHI[(N * row_ci) * row_ai];
-    obsv(PHI, Ai, Ci, row_ai, row_ci, N);
+	/*
+	 * Do linear programming with simplex method
+	 * You can do a minimization problem as well with simplex
+	 *  	Max c^Tx
+	 * 		S.t Ax <= b
+	 *      	 x >= 0
+	 *
+	 *  You can do a maximization problem as well with simplex
+	 *  	Max b^Tx
+	 * 		S.t A'x >= c
+	 *      	 x >= 0
+	 */
+	clock_t start, end;
+	float cpu_time_used;
+	start = clock();
+	/* Do a maximization problem: */
+	bool solution_max = linprog(c, bounds_A, bounds_b, x, 6 * 2, 4, true);
 
-    /* Create GAMMA matrix */
-    float GAMMA[(N * row_ci) * (N * column_bi)];
-    cab(GAMMA, PHI, Bi, Ci, row_ai, row_ci, column_bi, N);
+	/* Do a minimization problem: */
+	bool solution_min = linprog(C2, A2, B2, y, 3, 2, false);
 
-    /* Create vectors: state vector x, input signal u, reference vector r, maximum output signal Umax, slack variable values S */
-    float x[row_ai], u[column_bi], r[row_ci], Umax[column_bi], S[row_ci];
-    u[0] = 0;
-    r[0] = SETPOINT;
-    S[0] = 2.0f;
-    Umax[0] = MAX_U;
-    x[0] = -8;
-    x[1] = 20;
-    x[2] = 0;
+	end = clock();
+	cpu_time_used = ((float)(end - start)) / CLOCKS_PER_SEC;
+	printf("\nTotal speed  was %f\n", cpu_time_used);
 
-    clock_t start, end;
-    float cpu_time_used;
-    start = clock();
+	/* Print x */
+	printf("x: solution %s\n", solution_max == true ? "yes" : "no");
+	print(x, 4, 1);
 
-    /* This function should be placed inside a while-loop inside a microcontroller */
-    qmpc(GAMMA, PHI, x, u, Umax, S, r, row_ai, row_ci, column_bi, N, LAMBDA, HAS_INTEGRATION_ACTION, INTEGRATION_CONSTANT);
+	/* Print y */
+	printf("y: solution %s\n", solution_min == false ? "no" : "yes");
+	print(y, 2, 1);
 
-    end = clock();
-    cpu_time_used = ((float)(end - start)) / CLOCKS_PER_SEC;
-    printf("\nTotal speed  was %f\n", cpu_time_used);
-
-    /* Print the output signal */
-    print(u, column_bi, 1);
-
-    /* Detect memory leak */
-    detectmemoryleak();
-
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
 
-/* GNU octave code:
-% You need to install MataveControl from GitHub https://github.com/DanielMartensson/MataveControl/
+/*
+ * GNU Octave code:
+ *
+ * // Do maximization
+   bounds_A = [0.7179787,   0.7985186,   0.1000046,   0.2203064,
+			   0.9044292,   0.5074379,   0.3539301,   0.9475452,
+			   0.0029252,   0.4930148,   0.3209303,   0.5289174,
+			   0.6546133,   0.7354447,   0.9989453,   0.0310190,
+			   0.7434944,   0.0874402,   0.3388867,   0.8256180,
+			   0.7483093,   0.3624991,   0.2039784,   0.5528368,
+			  -0.7179787,  -0.7985186,  -0.1000046,  -0.2203064,
+			  -0.9044292,  -0.5074379,  -0.3539301,  -0.9475452,
+			  -0.0029252,  -0.4930148,  -0.3209303,  -0.5289174,
+			  -0.6546133,  -0.7354447,  -0.9989453,  -0.0310190,
+			  -0.7434944,  -0.0874402,  -0.3388867,  -0.8256180,
+			  -0.7483093,  -0.3624991,  -0.2039784,  -0.5528368];
 
-close all
-clear all
-clc
+	bounds_b = [0.90000,
+				0.60000,
+				0.60000,
+				0.90000,
+				0.90000,
+				0.90000,
+				0.40000,
+				0.10000,
+				0.50000,
+				1.00000,
+				0.40000,
+				0.20000];
 
-sys = mc.ss(0, [0 1; -1 -1], [0;1], [1 0]); % SISO state space model
+	c = [1.64160,
+		 0.92620,
+		 0.47139,
+		 1.43351];
 
-sysd = mc.c2d(sys, 0.5); % To discrete
+	x = glpk(c', bounds_A, bounds_b, [0;0;0;0], [], "UUUUUUUUUUUU", "CCCC", -1)
 
-R = [6]; % Reference for the SISO model. If MIMO -> R need to be a vector
-N = 10; % Horizon predict constant
-T = 35; % Horizon time constant
-lambda = 7; % Regularization for smoother inputs u
+	// Do minimization
+	 A2 = [22  13;
+			1   5;
+			1 20];
 
-[y, t, x, u] = mc.lmpc(sysd, N, R, T, lambda); % Simulate MPC with linear programming
-hold on
-plot(t, u)
+	  C2 = [9;
+			4];
 
-I = 0.2; % Integral action constant
-Umax = [0.4]; % Maximum input signal vector
-S = [2]; % Slack variable says that the output can be +2 over the reference R, in this case: 6+2 = 8
-lambda = 0.2; % Regularization for smoother inputs u
-figure(2); % New figure
-x0 = [-8; 20];
-[y, t, x, u] = mc.qmpc(sysd, N, R, T, lambda, Umax, S, I, x0); % Simulate MPC with quadratic programming
-hold on
-plot(t, u)
-*/
+	  B2 = [25;
+			 7;
+			 7];
+
+	  y = glpk(C2', A2, B2, [0;0], [], "LLL", "CC", 1)
+ *
+ */
